@@ -12,7 +12,10 @@
 
 1. Создать и активировать новый env с помощью conda с версией python = 3.10:
 ```bash
-conda create --name floor_plan python=3.10
+conda create --name floor_plan python=3.10 -y
+```
+```bash
+conda activate floor_plan
 ```
 
 2. Загрузить зависимости с помощью poetry:
