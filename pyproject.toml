@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "MLOpsProject"
+version = "0.1.0"
+description = "A floor plan segmentation library based on Deep Floor Plan Recognition."
+authors = ["Artemiy Ermilov <artermiloff@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+torch = { url = "https://download.pytorch.org/whl/cpu/torch-2.1.1%2Bcpu-cp310-cp310-linux_x86_64.whl"}
+torchvision = { url = "https://download.pytorch.org/whl/cpu/torchvision-0.16.1%2Bcpu-cp310-cp310-linux_x86_64.whl"}
+pandas = "^2.1.4"
+hydra-core = "^1.3.2"
+matplotlib = "^3.8.2"
+numpy = "^1.26.2"
+tqdm = "^4.66.1"
+tensorboard = "^2.15.1"
+torchmetrics = "^1.2.1"
+opencv-python = "^4.8.1.78"
+scipy = "^1.11.4"
+hydra-callbacks = "^0.5.1"
+dvc = "^3.36.0"
+dvc-gdrive = "^3.0.0"
+albumentations = "^1.3.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
