@@ -1,6 +1,6 @@
 outs:
-- md5: fc837c85b4dbe1747919088ba26b5718.dir
-  size: 60562898
-  nfiles: 2167
+- md5: 573444e2839cac1673513cb8f5ca519f.dir
+  size: 38788248
+  nfiles: 1084
   hash: md5
   path: FloorPlansRussia
