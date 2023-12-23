@@ -1,0 +1,5 @@
+outs:
+- md5: 0cdfc0cfa31348b57c22d2c1be3b1838
+  size: 110160018
+  hash: md5
+  path: final.pt
