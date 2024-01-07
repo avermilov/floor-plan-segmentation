@@ -24,7 +24,7 @@ def inference(args):
         format="%(asctime)s - %(module)s - %(levelname)s"
         + "- %(funcName)s: %(lineno)d - %(message)s",
     )
-    os.system("dvc pull --remote drive")
+    os.system("dvc pull")
 
     remap_room = {
         "closet": 5,
@@ -86,14 +86,14 @@ def inference(args):
         num_classes=args.boundary_channels, average="macro"
     ).to(device)
     with torch.inference_mode():
-        for im, cw, r in tqdm.tqdm(floorplan_dl):
-            im, cw, r = im.to(device), cw.to(device), r.to(device)
+        for im, cw, room in tqdm.tqdm(floorplan_dl):
+            im, cw, room = im.to(device), cw.to(device), room.to(device)
 
             logits_r, logits_cw = model(im)
 
-            pixel_acc_room = PixelAccRoom(logits_r, r.argmax(dim=1)).item()
+            pixel_acc_room = PixelAccRoom(logits_r, room.argmax(dim=1)).item()
             pixel_acc_cw = PixelAccCW(logits_cw, cw.argmax(dim=1)).item()
-            class_acc_room = ClassAccRoom(logits_r, r.argmax(dim=1)).item()
+            class_acc_room = ClassAccRoom(logits_r, room.argmax(dim=1)).item()
             class_acc_cw = ClassAccCW(logits_cw, cw.argmax(dim=1)).item()
 
             predictions_list.append(

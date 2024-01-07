@@ -3,10 +3,7 @@ import logging
 import os
 
 import hydra
-import matplotlib.pyplot as plt
 import numpy as np
-import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim
 import tqdm
 from omegaconf import DictConfig
@@ -14,119 +11,24 @@ from torch.utils.data import DataLoader, SubsetRandomSampler
 from torch.utils.tensorboard import SummaryWriter
 from torchmetrics.classification import MulticlassAccuracy, MulticlassJaccardIndex
 
+from loss import balanced_entropy, cross_two_tasks_weight
 from postprocess import clean_room
-from util import bchw2colormap, boundary2rgb, room2rgb
+from util import bchw2colormap, boundary2rgb, room2rgb, seed_everything
+from visualize import compare_full, compare_rb
 
 
-def seed_everything(seed: int):
-    import os
-    import random
-
-    import numpy as np
-    import torch
-
-    random.seed(seed)
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
+def log_to_tb(writer, metric_names, metric_fns, pred, gt, epoch, log_prefix):
+    for metric_name, metric_fn in zip(metric_names, metric_fns):
+        writer.add_scalar(
+            log_prefix + metric_name,
+            metric_fn(pred, gt),
+            global_step=epoch,
+        )
 
 
 def get_lr(optimizer):
     for param_group in optimizer.param_groups:
         return param_group["lr"]
-
-
-def balanced_entropy(preds, targets):
-    eps = 1e-6
-    m = nn.Softmax(dim=1)
-    z = m(preds)
-    cliped_z = torch.clamp(z, eps, 1 - eps)
-    log_z = torch.log(cliped_z)
-    num_classes = targets.size(1)
-    ind = torch.argmax(targets, 1).type(torch.int)
-
-    total = torch.sum(targets)
-
-    m_c, n_c = [], []
-    for c in range(num_classes):
-        m_c.append((ind == c).type(torch.int))
-        n_c.append(torch.sum(m_c[-1]).type(torch.float))
-
-    c = []
-    for i in range(num_classes):
-        c.append(total - n_c[i])
-    tc = sum(c)
-
-    loss = 0
-    for i in range(num_classes):
-        w = c[i] / tc
-        m_c_one_hot = F.one_hot(
-            (i * m_c[i]).permute(1, 2, 0).type(torch.long), num_classes
-        )
-        m_c_one_hot = m_c_one_hot.permute(2, 3, 0, 1)
-        y_c = m_c_one_hot * targets
-        loss += w * torch.sum(-torch.sum(y_c * log_z, axis=2))
-    return loss / num_classes
-
-
-def cross_two_tasks_weight(rooms, boundaries):
-    p1 = torch.sum(rooms).type(torch.float)
-    p2 = torch.sum(boundaries).type(torch.float)
-    w1 = torch.div(p2, p1 + p2)
-    w2 = torch.div(p1, p1 + p2)
-    return w1, w2
-
-
-def compare_rb(images, rooms, boundaries, r, cw):
-    image = (bchw2colormap(images, earlyexit=True) * 255).astype(np.uint8)
-    room = bchw2colormap(rooms).astype(np.uint8)
-    boundary = bchw2colormap(boundaries).astype(np.uint8)
-    r = bchw2colormap(r).astype(np.uint8)
-    cw = bchw2colormap(cw).astype(np.uint8)
-    room_post = clean_room(r, cw).astype(np.uint8)
-
-    f = plt.figure(dpi=170)
-    for i, (name, img) in enumerate(
-        [
-            ("image", image),
-            ("room gt", room2rgb(room)),
-            ("bd gt", boundary2rgb(boundary)),
-            ("r pred post", room2rgb(room_post)),
-            ("r pred", room2rgb(r)),
-            ("bd pred", boundary2rgb(cw)),
-        ],
-        start=1,
-    ):
-        plt.subplot(2, 3, i)
-        plt.tick_params(left=False, right=False, top=False, bottom=False)
-        plt.gca().axes.xaxis.set_ticklabels([])
-        plt.gca().axes.yaxis.set_ticklabels([])
-
-        plt.title(name)
-        plt.imshow(img)
-
-    return f
-
-
-def compare_full(images, pred_full, gt_full):
-    image = (bchw2colormap(images, earlyexit=True) * 255).astype(np.uint8)
-
-    f = plt.figure(figsize=(8, 4), dpi=150)
-    for i, (name, img) in enumerate(
-        [("image", image), ("pred", pred_full), ("gt", gt_full)], start=1
-    ):
-        plt.subplot(1, 3, i)
-        plt.tick_params(left=False, right=False, top=False, bottom=False)
-        plt.gca().axes.xaxis.set_ticklabels([])
-        plt.gca().axes.yaxis.set_ticklabels([])
-
-        plt.title(name)
-        plt.imshow(img)
-
-    return f
 
 
 def remap_color_sum_to_combined(arr, d):
@@ -149,7 +51,7 @@ def main(cfg: DictConfig) -> None:
     logging.basicConfig(
         level=logging.DEBUG,
         format="%(asctime)s - %(module)s - %(levelname)s"
-        + " - %(funcName)s: %(lineno)d - %(message)s",
+        + " - %(funcName)s: %(lineno)remap_dict - %(message)s",
     )
 
     logging.info(f"Experiment: {cfg.general.name}")
@@ -273,7 +175,6 @@ def main(cfg: DictConfig) -> None:
 
     logging.info("Begin training")
     for epoch in range(cfg.general.epochs):
-        # TRAINING LOOP
         run_train = {
             "loss": 0.0,
             "loss_room": 0.0,
@@ -287,22 +188,22 @@ def main(cfg: DictConfig) -> None:
         for idx, (
             im,
             cw,
-            r,
+            room,
         ) in tqdm.tqdm(
             enumerate(train_loader),
             total=len(train_loader),
             desc=f"Training #{epoch:03}",
         ):
-            im, cw, r = im.to(DEVICE), cw.to(DEVICE), r.to(DEVICE)
+            im, cw, room = im.to(DEVICE), cw.to(DEVICE), room.to(DEVICE)
             # zero gradients
             optimizer.zero_grad()
             model.train()
             # forward
             logits_r, logits_cw = model(im)
             # loss
-            loss1 = balanced_entropy(logits_r, r) * room_w
+            loss1 = balanced_entropy(logits_r, room) * room_w
             loss2 = balanced_entropy(logits_cw, cw) * boundary_w
-            w1, w2 = cross_two_tasks_weight(r, cw)
+            w1, w2 = cross_two_tasks_weight(room, cw)
             loss = w1 * loss1 + w2 * loss2
             # backward
             loss.backward()
@@ -314,13 +215,13 @@ def main(cfg: DictConfig) -> None:
             run_train["loss_boundary"] += loss2.item()
 
             run_train["pixel_acc_room"] += PixelAccRoom(
-                logits_r, r.argmax(dim=1)
+                logits_r, room.argmax(dim=1)
             ).item()
             run_train["pixel_acc_boundary"] += PixelAccCW(
                 logits_cw, cw.argmax(dim=1)
             ).item()
             run_train["class_acc_room"] += ClassAccRoom(
-                logits_r, r.argmax(dim=1)
+                logits_r, room.argmax(dim=1)
             ).item()
             run_train["class_acc_boundary"] += ClassAccCW(
                 logits_cw, cw.argmax(dim=1)
@@ -334,7 +235,7 @@ def main(cfg: DictConfig) -> None:
                 scheduler.step()
 
             if idx % cfg.logging.log_train_every_n_epochs == 0:
-                train_example = compare_rb(im, r, cw, logits_r, logits_cw)
+                train_example = compare_rb(im, room, cw, logits_r, logits_cw)
                 writer.add_figure(f"train/image_{idx:03}", train_example, epoch)
         for name, value in run_train.items():
             writer.add_scalar("train/" + name, value / train_ds_size, global_step=epoch)
@@ -342,7 +243,6 @@ def main(cfg: DictConfig) -> None:
         if scheduler is not None and not scheduler_batch_wise_step:
             scheduler.step()
 
-        # TOTAL VALIDATION LOOP
         run_val_total = {
             "loss": 0.0,
             "loss_room": 0.0,
@@ -357,7 +257,6 @@ def main(cfg: DictConfig) -> None:
         total_run_val_pred_post = np.array([])
         with torch.inference_mode():
             model.eval()
-            # SINGLE VALIDATION LOOP
             for val_loader in val_loader_list:
                 val_ds_size = len(val_loader.dataset)
                 run_val = {
@@ -369,23 +268,20 @@ def main(cfg: DictConfig) -> None:
                     "class_acc_room": 0.0,
                     "class_acc_boundary": 0.0,
                 }
-                # running_val_gt = np.array([]),
-                # running_val_pred = np.array([]),
-                # running_val_pred_post = np.array([])
 
                 ds_name = val_loader.dataset.name
-                for idx, (im, cw, r) in tqdm.tqdm(
+                for idx, (im, cw, room) in tqdm.tqdm(
                     enumerate(val_loader), total=val_ds_size, desc=f"Val {ds_name}"
                 ):
-                    im, cw, r = im.to(DEVICE), cw.to(DEVICE), r.to(DEVICE)
+                    im, cw, room = im.to(DEVICE), cw.to(DEVICE), room.to(DEVICE)
 
                     optimizer.zero_grad()
                     # forward
                     logits_r, logits_cw = model(im)
                     # loss
-                    loss1 = balanced_entropy(logits_r, r) * room_w
+                    loss1 = balanced_entropy(logits_r, room) * room_w
                     loss2 = balanced_entropy(logits_cw, cw) * boundary_w
-                    w1, w2 = cross_two_tasks_weight(r, cw)
+                    w1, w2 = cross_two_tasks_weight(room, cw)
                     loss = w1 * loss1 + w2 * loss2
                     # ds running statistics
                     run_val["loss"] += loss.item()
@@ -397,9 +293,9 @@ def main(cfg: DictConfig) -> None:
                     run_val_total["loss_boundary"] += loss2.item()
 
                     # metrics
-                    pixel_acc_room = PixelAccRoom(logits_r, r.argmax(dim=1))
+                    pixel_acc_room = PixelAccRoom(logits_r, room.argmax(dim=1))
                     pixel_acc_cw = PixelAccCW(logits_cw, cw.argmax(dim=1))
-                    class_acc_room = ClassAccRoom(logits_r, r.argmax(dim=1))
+                    class_acc_room = ClassAccRoom(logits_r, room.argmax(dim=1))
                     class_acc_cw = ClassAccCW(logits_cw, cw.argmax(dim=1))
 
                     run_val["pixel_acc_room"] += pixel_acc_room.item()
@@ -434,7 +330,7 @@ def main(cfg: DictConfig) -> None:
                     rgb_full_pred_post_sum = rgb_full_post.sum(axis=2)
                     rgb_full_pred_sum = rgb_full.sum(axis=2)
 
-                    rgb_full_gt = room2rgb(bchw2colormap(r)) + boundary2rgb(
+                    rgb_full_gt = room2rgb(bchw2colormap(room)) + boundary2rgb(
                         bchw2colormap(cw)
                     )
                     rgb_full_gt_sum = rgb_full_gt.sum(axis=2)
@@ -451,7 +347,7 @@ def main(cfg: DictConfig) -> None:
 
                     # log image
                     if idx % cfg.logging.log_val_every_n_epochs == 0:
-                        rb_pred = compare_rb(im, r, cw, logits_r, logits_cw)
+                        rb_pred = compare_rb(im, room, cw, logits_r, logits_cw)
                         writer.add_figure(
                             f"val_{ds_name}/image_{idx:03}", rb_pred, epoch
                         )
@@ -464,7 +360,6 @@ def main(cfg: DictConfig) -> None:
                     writer.add_scalar(
                         f"val_{ds_name}/{name}", value / val_ds_size, global_step=epoch
                     )
-                # log ds combined metrics
 
         # log total metrics
         for name, value in run_val_total.items():
@@ -473,57 +368,37 @@ def main(cfg: DictConfig) -> None:
             )
         # log total combined metrics
         unique_vals = np.unique(total_run_val_gt)
-        d = dict(zip(unique_vals, list(range(len(unique_vals)))))
+        remap_dict = dict(zip(unique_vals, list(range(len(unique_vals)))))
         total_run_val_gt = torch.tensor(
-            remap_color_sum_to_combined(total_run_val_gt, d)
+            remap_color_sum_to_combined(total_run_val_gt, remap_dict)
         )
         total_run_val_pred = torch.tensor(
-            remap_color_sum_to_combined(total_run_val_pred, d)
+            remap_color_sum_to_combined(total_run_val_pred, remap_dict)
         )
         total_run_val_pred_post = torch.tensor(
-            remap_color_sum_to_combined(total_run_val_pred_post, d)
+            remap_color_sum_to_combined(total_run_val_pred_post, remap_dict)
         )
 
-        writer.add_scalar(
-            "val/total_acc_pixel_post",
-            PixelAcc(total_run_val_pred_post, total_run_val_gt),
-            global_step=epoch,
-        )
-        writer.add_scalar(
-            "val/total_acc_class_post",
-            ClassAcc(total_run_val_pred_post, total_run_val_gt),
-            global_step=epoch,
-        )
-        writer.add_scalar(
-            "val/total_iou_pixel_post",
-            PixelIOU(total_run_val_pred_post, total_run_val_gt),
-            global_step=epoch,
-        )
-        writer.add_scalar(
-            "val/total_iou_class_post",
-            ClassIOU(total_run_val_pred_post, total_run_val_gt),
-            global_step=epoch,
-        )
-        writer.add_scalar(
-            "val/total_acc_pixel",
-            PixelAcc(total_run_val_pred, total_run_val_gt),
-            global_step=epoch,
-        )
-        writer.add_scalar(
-            "val/total_acc_class",
-            ClassAcc(total_run_val_pred, total_run_val_gt),
-            global_step=epoch,
-        )
-        writer.add_scalar(
-            "val/total_iou_pixel",
-            PixelIOU(total_run_val_pred, total_run_val_gt),
-            global_step=epoch,
-        )
-        writer.add_scalar(
-            "val/total_iou_class",
-            ClassIOU(total_run_val_pred, total_run_val_gt),
-            global_step=epoch,
-        )
+        # log both raw and postprocessed results
+        for suffix, pred in [
+            ("_post", total_run_val_pred_post),
+            ("", total_run_val_pred),
+        ]:
+            log_to_tb(
+                writer,
+                metric_names=[
+                    "total_acc_pixel" + suffix,
+                    "total_acc_class" + suffix,
+                    "total_iou_pixel" + suffix,
+                    "total_iou_class" + suffix,
+                ],
+                metric_fns=[PixelAcc, ClassAcc, PixelIOU, ClassIOU],
+                pred=pred,
+                gt=total_run_val_gt,
+                epoch=epoch,
+                log_prefix="val/",
+            )
+
         # save model
         val_loss = run_val_total["loss"] / total_val_ds_size
         if (epoch + 1) % cfg.logging.save_every_n_epochs == 0:

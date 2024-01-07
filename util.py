@@ -2,6 +2,22 @@ import numpy as np
 from PIL import Image
 
 
+def seed_everything(seed: int):
+    import os
+    import random
+
+    import numpy as np
+    import torch
+
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = True
+
+
 def bchw2colormap(tensor, earlyexit=False):
     if tensor.size(0) != 1:
         tensor = tensor[0].unsqueeze(0)
@@ -15,16 +31,16 @@ def bchw2colormap(tensor, earlyexit=False):
 def image_grid(imgs, rows, cols):
     assert len(imgs) == rows * cols
 
-    w, h = imgs[0].size
-    grid = Image.new("RGB", size=(cols * w, rows * h))
+    width, height = imgs[0].size
+    grid = Image.new("RGB", size=(cols * width, rows * height))
 
     for i, img in enumerate(imgs):
-        grid.paste(img, box=(i % cols * w, i // cols * h))
+        grid.paste(img, box=(i % cols * width, i // cols * height))
     return grid
 
 
-def hex_to_rgb(s):
-    return tuple(int(s[i : i + 2], 16) for i in (0, 2, 4))
+def hex_to_rgb(hex_str):
+    return tuple(int(hex_str[i : i + 2], 16) for i in (0, 2, 4))
 
 
 pred_boundary_type_to_rgb = {
@@ -64,8 +80,6 @@ boundary_int_to_rgb = {
     2: pred_boundary_type_to_rgb["window"],
     3: pred_boundary_type_to_rgb["door"],
     4: pred_boundary_type_to_rgb["openingtohall"],
-    # 5: pred_boundary_type_to_rgb["closet"],
-    # 6: pred_boundary_type_to_rgb["room"],
 }
 
 

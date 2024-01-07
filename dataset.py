@@ -1,12 +1,10 @@
-import gc
 import glob
 import os
 
-import albumentations
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as func
 import torchvision
 from PIL import Image
 from torch.utils.data import Dataset
@@ -74,9 +72,9 @@ def dynamic_crop(image, boundary, room):
             break
 
     # crop longer side
-    h, w, c = image.shape
+    height, width, channels = image.shape
     while True:
-        if h > w:
+        if height > width:
             if (
                 np.unique(
                     np.concatenate(
@@ -91,7 +89,7 @@ def dynamic_crop(image, boundary, room):
                 room = room[1:-1, :]
             else:
                 break
-        elif w > h:
+        elif width > height:
             if (
                 np.unique(
                     np.concatenate(
@@ -147,26 +145,26 @@ class FillShape(nn.Module):
         if self.type == "none":
             return image, boundary, room
 
-        h, w, c = image.shape
-        if h == w:
+        height, width, channels = image.shape
+        if height == width:
             return image, boundary, room
 
-        if h > w:
+        if height > width:
             pad_h_left, pad_h_right = 0, 0
             pad_w_left = (
-                (h - w) // 2
+                (height - width) // 2
                 if self.type == "center"
-                else np.random.randint(0, h - w + 1)
+                else np.random.randint(0, height - width + 1)
             )
-            pad_w_right = h - w - pad_w_left
+            pad_w_right = height - width - pad_w_left
         else:
             pad_w_left, pad_w_right = 0, 0
             pad_h_left = (
-                (w - h) // 2
+                (width - height) // 2
                 if self.type == "center"
-                else np.random.randint(0, w - h + 1)
+                else np.random.randint(0, width - height + 1)
             )
-            pad_h_right = w - h - pad_h_left
+            pad_h_right = width - height - pad_h_left
 
         padded_room = np.pad(
             room, ((pad_h_left, pad_h_right), (pad_w_left, pad_w_right)), "constant"
@@ -249,64 +247,13 @@ class FloorPlanDataset(Dataset):
 
         image = self.to_tensor(image.astype(np.float32) / 255.0)
         boundary = self.to_tensor(
-            F.one_hot(torch.LongTensor(boundary), self.num_boundary).numpy()
+            func.one_hot(torch.LongTensor(boundary), self.num_boundary).numpy()
         )
-        room = self.to_tensor(F.one_hot(torch.LongTensor(room), self.num_room).numpy())
+        room = self.to_tensor(
+            func.one_hot(torch.LongTensor(room), self.num_room).numpy()
+        )
 
         return image, boundary, room
 
     def __len__(self):
         return len(self.image_paths)
-
-
-if __name__ == "__main__":
-    import matplotlib.pyplot as plt
-
-    DFPdataset = FloorPlanDataset(
-        root_dir="/home/artermiloff/PycharmProjects/"
-        + "PyTorch-DeepFloorplan/dataset/FPR_433_v2/val_rare",
-        num_boundary=5,
-        num_room=7,
-        remap_room={
-            "closet": 5,
-            "bathroom": 2,
-            "hall": 1,
-            "balcony": 4,
-            "room": 6,
-            "utility": 3,
-            "openingtohall": 0,
-            "openingtoroom": 0,
-        },
-        remap_boundary={"utility": 0, "openingtohall": 4, "openingtoroom": 4},
-        name="stuff",
-        transform=albumentations.Compose(
-            [
-                albumentations.Resize(512, 512, 0),
-            ]
-        ),
-        fill_type=False,
-        crop_type=False,
-    )
-
-    print(len(DFPdataset))
-    # for i in range(len(DFPdataset)):
-    #     image, boundary, room = DFPdataset[i]
-    #     print(i, image.shape)
-
-    for i in [14]:
-        image, boundary, room = DFPdataset[i]
-        print(image.shape, boundary.shape, room.shape)
-
-        plt.subplot(2, 2, 1)
-        plt.imshow(torchvision.transforms.ToPILImage()(image))
-        plt.subplot(2, 2, 2)
-        plt.imshow(boundary)
-        plt.subplot(2, 2, 3)
-        plt.imshow(room)
-        # plt.subplot(2, 2, 4)
-        # plt.imshow(door)
-        plt.show()
-
-    # breakpoint()
-
-    gc.collect()

@@ -4,6 +4,10 @@ hydra:
             _target_: hydra_callbacks.GitInfo
     run:
         dir: experiment_logs/${general.name}/train_${now:%Y%m%d_%H%M%S}
+defaults:
+  - _self_
+  - dataset/floorplanrussia
+
 
 general:
     name: DEFAULT
@@ -41,117 +45,7 @@ scheduler:
 loss:
     room_w: 1
     boundary_w: 4
-dataset:
-    remap_boundary:
-        utility: 0
-        openingtohall: 4
-        openingtoroom: 4
-    remap_room:
-        closet: 5
-        bathroom: 2
-        hall: 1
-        balcony: 4
-        room: 6
-        utility: 3
-        openingtohall: 0
-        openingtoroom: 0
-    split_seed: 3
-    train:
-        _target_: dataset.FloorPlanDataset
-        root_dir: data/FloorPlansRussia/train
-        name: null
-        fill_type: random
-        crop_type: full
-        remap_boundary: ${dataset.remap_boundary}
-        remap_room: ${dataset.remap_room}
-        num_boundary: ${general.boundary_channels}
-        num_room: ${general.room_channels}
-        transform:
-            _target_: albumentations.Compose
-            transforms:
-                - _target_: albumentations.Resize
-                  height: 512
-                  width: 512
-                  interpolation: 0
-                - _target_: albumentations.RandomRotate90
-                  p: 0.5
-                - _target_: albumentations.VerticalFlip
-                  p: 0.5
-                - _target_: albumentations.HorizontalFlip
-                  p: 0.5
-                - _target_: albumentations.OneOrOther
-                  p: 0.5
-                  first:
-                      _target_: albumentations.CropAndPad
-                      p: 0.5
-                      percent:
-                          - 0.01
-                          - 0.1
-                      pad_mode: 0
-                      pad_cval:
-                          - - 255
-                            - 255
-                            - 255
-                      pad_cval_mask: 0
-                      sample_independently: false
-                  second:
-                      _target_: albumentations.Compose
-                      transforms:
-                          - _target_: albumentations.CropAndPad
-                            p: 1
-                            percent:
-                                - 0.05
-                                - 0.15
-                            pad_mode: 0
-                            pad_cval:
-                                - - 255
-                                  - 255
-                                  - 255
-                            pad_cval_mask: 0
-                            sample_independently: false
-                          - _target_: albumentations.Rotate
-                            p: 1
-                            limit: 60
-                            interpolation: 0
-                            border_mode: 0
-                            value:
-                                - 255
-                                - 255
-                                - 255
-                            mask_value: 0
-    val:
-        - _target_: dataset.FloorPlanDataset
-          root_dir: data/FloorPlansRussia/val_standard
-          name: standard
-          remap_boundary: ${dataset.remap_boundary}
-          remap_room: ${dataset.remap_room}
-          num_boundary: ${general.boundary_channels}
-          num_room: ${general.room_channels}
-          fill_type: center
-          crop_type: full
-          transform:
-              _target_: albumentations.Compose
-              transforms:
-                  - _target_: albumentations.Resize
-                    height: 512
-                    width: 512
-                    interpolation: 0
-        - _target_: dataset.FloorPlanDataset
-          root_dir: data/FloorPlansRussia/val_rare
-          name: rare
-          remap_boundary: ${dataset.remap_boundary}
-          remap_room: ${dataset.remap_room}
-          num_boundary: ${general.boundary_channels}
-          num_room: ${general.room_channels}
-          fill_type: center
-          crop_type: full
-          transform:
-              _target_: albumentations.Compose
-              transforms:
-                  - _target_: albumentations.Resize
-                    height: 512
-                    width: 512
-                    interpolation: 0
+
 logging:
     save_every_n_epochs: 5
     log_train_every_n_epochs: 25
